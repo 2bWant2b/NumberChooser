@@ -1,0 +1,948 @@
+module numchooser(clk,rst,row,col,digitscan,digitcath,Button,SW_7,beepout);
+
+input clk,rst;
+input [6:0] Button;			//按键
+input SW_7;						//总开关
+output [7:0]row;          	//点阵的行总线
+output [7:0]col;          	//点阵的列总线
+output [7:0]digitscan;		//数码管段选总线
+output [7:0]digitcath;		//数码管位选总线
+output beepout;				//蜂鸣器总线
+wire [6:0] clk_seven;		//分频时钟
+wire [6:0] flag;				//按键统计
+wire [6:0] Button_pulse;	//消抖按键
+wire clk_500;
+//开机自检信号判断
+reg begin_signal;
+wire begin_signal_temp;
+assign begin_signal_temp=begin_signal;
+
+always@(posedge clk or posedge rst or negedge SW_7) begin
+if(SW_7==0)begin
+	begin_signal<=0;
+	end
+else if(rst) begin
+	begin_signal<=1;
+	end
+else
+	begin_signal<=begin_signal;
+end
+
+//结束信号判断
+reg end_signal;
+wire end_signal_temp;
+assign end_signal_temp=end_signal; 
+
+always@(posedge clk or posedge rst or negedge flag[0])begin
+if(flag[0]==0)begin
+	end_signal<=1;
+	end
+else
+	end_signal<=0;
+end
+
+
+
+time_divider u_divide(
+	.clk(clk),
+	.clk_seven(clk_seven),
+	.clk_500(clk_500)
+);
+
+signal_creater u_signal(
+	.clk(clk),
+	.rst(rst),
+	.Button_pulse(Button_pulse),
+	.flag(flag),
+	.Button(Button),
+	.clk_500(clk_500)
+	);
+	
+decoder u_decode(
+	.clk(clk),
+	.SW_7(SW_7),
+	.clk_500(clk_500),
+	.rst(rst),
+	.Button(Button),
+	.clk_seven(clk_seven),
+	.begin_signal_temp(begin_signal_temp),
+	.end_signal_temp(end_signal_temp),
+	.beepout(beepout),
+	.flag(flag),
+	.digitscan(digitscan),
+	.row(row),
+	.digitcath(digitcath),
+	.col(col)
+
+);
+endmodule
+
+
+module decoder(clk,clk_500,rst,Button,SW_7,clk_seven,begin_signal_temp,end_signal_temp,flag,beepout,col,digitscan,row,digitcath);
+input clk,clk_500,rst,begin_signal_temp,end_signal_temp;
+input SW_7;
+input [7:0]Button;
+input [6:0]clk_seven;
+input [6:0]flag;
+output beepout;
+output [7:0]col;
+output [7:0]digitscan;
+output[7:0]row;
+output[7:0]digitcath;
+
+wire [7:0]col_temp1;			//列线1
+wire [7:0]col_temp2;			//列线2
+wire [7:0]digit_seg1;		//段选线1
+wire [7:0]digit_seg2;		//段选线2
+wire [7:0]row_temp1;			//行扫线1
+wire [7:0]digitcath_temp1;	//位选线1
+wire [2:0]beep_1; 					//蜂鸣器次级分支线
+wire [2:0]beep1;
+wire [2:0]beep2;				//蜂鸣器最低分支线
+wire row_signal;
+wire digit_signal;
+wire [2:0]beep_2;
+wire [2:0]beep;
+//连线
+assign col=begin_signal_temp?col_temp1:col_temp2;
+assign digitscan = begin_signal_temp ? digit_seg1 : digit_seg2;
+
+//连线
+assign row=row_signal?8'b11111111:row_temp1;
+assign digitcath = digit_signal ? 8'b11111111:digitcath_temp1 ;
+
+//连线
+assign beep_1=begin_signal_temp?beep2:beep1;  //按键音
+assign beep=end_signal_temp?beep_2:beep_1;
+
+judgeFlag_beep u_beep2(						//按键统计（蜂鸣器）
+	.clk(clk),
+	.Button(Button),
+	.beep(beep2)
+	);
+
+start_check  u_start(						//开机自检解码
+	.clk_2Hz(clk_seven[6]),
+	.SW_7(SW_7),
+	.col(col_temp2),
+	.digit_seg(digit_seg2),
+	.beep(beep1)
+	);
+
+end_check u_end(								//结束解码
+	.clk_2Hz(clk_seven[6]),
+	.end_signal(end_signal_temp),
+	.beep_2(beep_2),
+	.row_signal(row_signal),
+	.digit_signal(digit_signal)
+	);
+	
+decode_lattice    u7(						//点阵解码
+	.clk_500(clk_500),
+	.clk_2Hz(clk_seven[6]),
+	.rst(rst),
+	.row(row_temp1),
+	.col(col_temp1),
+	.flag(flag[6])
+);
+
+decode_digit u_digit(						//数码管解码
+	.clk_500(clk_500),
+	.flag(flag[6:0]),
+	.clk1(clk_seven[0]),	
+	.clk2(clk_seven[1]),
+	.clk3(clk_seven[2]),
+	.clk4(clk_seven[3]),
+	.clk5(clk_seven[4]),
+	.clk6(clk_seven[5]),
+	.rst(rst),
+	.digit_seg(digit_seg1), 
+	.digit_cath(digitcath_temp1)
+);
+beep_on u_beep(								//按键音解码
+	.clk(clk),
+	.clk_500(clk_500),
+	.rst(rst),
+	.beep(beep),
+	.beepout(beepout)
+);
+endmodule
+
+module signal_creater(clk,rst,Button_pulse,flag,Button,clk_500);
+input clk,rst,clk_500;
+output [6:0] flag;
+input	[6:0]Button;
+output [6:0]Button_pulse;
+
+judgeFlag u_flag(								//按键判断统计
+	.clk(clk),
+	.rst(rst),
+	.Button_pulse(Button_pulse),
+	.flag(flag)
+	);	
+debounce #(.N(7)) u_debounce(				//消抖
+	.clk(clk),
+	.rst(rst),
+	.key(~Button),
+	.key_pulse(Button_pulse),
+	);
+endmodule
+
+module time_divider(clk,clk_seven,clk_500);
+input clk;
+output [6:0]clk_seven;
+output clk_500;
+divider3 #(.N(50000)) u_clk_500(			//500Hz
+	.clkin(clk),
+	.clkout(clk_500)
+	);
+	
+divider2 #(.N(5)) u_clk_6(					//2Hz
+	.clkin(clk_seven[0]),
+	.clkout(clk_seven[6])
+	);
+	
+divider2 #(.N(1)) u_clk_5(					//2.5Hz
+	.clkin(clk_seven[3]),
+	.clkout(clk_seven[5])
+	);
+	
+divider2 #(.N(3)) u_clk_4(					//3.3Hz
+	.clkin(clk_seven[0]),
+	.clkout(clk_seven[4])
+	);
+	
+divider2 #(.N(1)) u_clk_3(					//5Hz
+	.clkin(clk_seven[2]),
+	.clkout(clk_seven[3])
+	);
+	
+divider2 #(.N(1)) u_clk_2(					//10Hz
+	.clkin(clk_seven[0]),
+	.clkout(clk_seven[2])
+	);
+	
+divider4 #(.N(20)) u_clk_1(      		//12.5Hz
+	.clkin(clk_500),
+	.clkout(clk_seven[1])
+	);
+	
+divider1 #(.N(1250000)) u_clk_0(			//20Hz
+	.clkin(clk),
+	.clkout(clk_seven[0])
+	);
+
+endmodule
+
+//按键音解码
+module beep_on(clk,clk_500,rst,beep,beepout);
+input clk,clk_500,rst;
+input[2:0]beep;
+reg[14:0] div_buffer1;
+reg[14:0] div_buffer2;
+reg[14:0] div_buffer3;
+reg[14:0] div_buffer4;
+reg[13:0] div_buffer5;
+reg[13:0] div_buffer6;
+reg clk_temp1;
+reg clk_temp2;
+reg clk_temp3;
+reg clk_temp4;
+reg clk_temp5;
+reg clk_temp6;
+output reg beepout;
+
+always@(posedge clk or posedge rst) //分频器
+begin  
+  if(rst)
+    begin
+	   div_buffer1 <= 1'b0;
+		clk_temp1 <= 1'b0;
+	 end
+  else if(div_buffer1==15'd23912)
+    begin
+      div_buffer1 <= 1'b0;
+      clk_temp1 <= ~clk_temp1;
+	 end
+  else
+    div_buffer1 <=div_buffer1+1'b1;
+end
+
+always@(posedge clk or posedge rst) //分频器
+begin  
+  if(rst)
+    begin
+	   div_buffer2 <= 1'b0;
+		clk_temp2 <= 1'b0;
+	 end
+  else if(div_buffer2==15'd21283)
+    begin
+      div_buffer2 <= 1'b0;
+      clk_temp2 <= ~clk_temp2;
+	 end
+  else
+    div_buffer2 <=div_buffer2+1'b1;
+end
+always@(posedge clk or posedge rst) //分频器
+begin  
+  if(rst)
+    begin
+	   div_buffer3 <= 1'b0;
+		clk_temp3 <= 1'b0;
+	 end
+  else if(div_buffer3==15'd18961)
+    begin
+      div_buffer3 <= 1'b0;
+      clk_temp3 <= ~clk_temp3;
+	 end
+  else
+    div_buffer3 <=div_buffer3+1'b1;
+end
+always@(posedge clk or posedge rst) //分频器
+begin  
+  if(rst)
+    begin
+	   div_buffer4 <= 1'b0;
+		clk_temp4 <= 1'b0;
+	 end
+  else if(div_buffer4==15'd17897)
+    begin
+      div_buffer4<= 1'b0;
+      clk_temp4<= ~clk_temp4;
+	 end
+  else
+    div_buffer4<=div_buffer4+1'b1;
+end
+always@(posedge clk or posedge rst) //分频器
+begin  
+  if(rst)
+    begin
+	   div_buffer5 <= 1'b0;
+		clk_temp5 <= 1'b0;
+	 end
+  else if(div_buffer5==15'd15944)
+    begin
+      div_buffer5<= 1'b0;
+      clk_temp5<= ~clk_temp5;
+	 end
+  else
+    div_buffer5<=div_buffer5+1'b1;
+end
+always@(posedge clk or posedge rst) //分频器
+begin  
+  if(rst)
+    begin
+	   div_buffer6 <= 1'b0;
+		clk_temp6<= 1'b0;
+	 end
+  else if(div_buffer6==15'd14205)
+    begin
+      div_buffer6<= 1'b0;
+      clk_temp6 <= ~clk_temp6;
+	 end
+  else
+    div_buffer6<=div_buffer6+1'b1;
+end
+
+always@(posedge clk )begin
+case(beep)
+	3'b001:beepout<=clk_temp1;
+	3'b010:beepout<=clk_temp2;
+	3'b011:beepout<=clk_temp3;
+	3'b100:beepout<=clk_temp4;
+	3'b101:beepout<=clk_temp5;
+	3'b110:beepout<=clk_temp6;
+	3'b111:beepout<=clk_500;
+	default:beepout<=0;
+	endcase
+end
+endmodule
+
+
+
+//开机自检解码
+module start_check(clk_2Hz,SW_7,col,digit_seg,beep);
+input clk_2Hz,SW_7;
+output reg [7:0]col;
+output reg[7:0] digit_seg;
+output reg[2:0] beep;
+reg [3:0] code;
+reg flag;
+
+always @(posedge clk_2Hz) begin
+	if(SW_7==0)
+		begin
+			flag<=1'b1;
+			code<=0;
+			col<=8'b0000_0000;
+			digit_seg<=8'b00000000;
+			beep<=0;
+		end
+	else if(SW_7==1)
+	begin
+			if(code==6)
+				begin
+					flag<=0;
+					col<=0;
+					digit_seg<=0;
+					beep<=0;
+				end
+			else if(flag) begin
+				col<=~col;
+				digit_seg <= ~digit_seg;
+				beep<=beep+1;
+				code <= code+1;
+				end
+			else 
+			begin
+			col<=0;
+			digit_seg<=0;
+			beep<=0;
+			end
+		end
+	else begin
+		code<=code;
+		beep<=0;
+	end
+end
+endmodule
+
+//结束解码
+module end_check(clk_2Hz,end_signal,beep_2,row_signal,digit_signal);
+input clk_2Hz;//要传2Hz
+input end_signal;
+output reg row_signal;
+output reg digit_signal;
+output reg [2:0]beep_2;
+reg [3:0] code;
+reg temp;
+
+always@(posedge clk_2Hz)begin
+if(end_signal==0)
+		begin
+			temp<=1'b1;
+			code<=0;
+			row_signal<=0;
+			digit_signal<=0;
+			beep_2<=0;
+		end
+	else if(end_signal==1)
+	begin
+			if(code==6)
+				begin
+					temp<=0;
+					row_signal<=0;
+					digit_signal<=0;
+					beep_2<=0;
+				end
+			else if(temp) begin
+				row_signal<=~row_signal;
+				digit_signal <= ~digit_signal;
+				beep_2<=beep_2+1;
+				code <= code+1;
+				end
+			else 
+			begin
+			row_signal<=0;
+			digit_signal<=0;
+			beep_2<=0;
+			end
+		end
+	else begin
+		code<=code;
+		beep_2<=0;
+	end
+	end
+endmodule
+
+//按键声音判断统计
+module judgeFlag_beep(clk,Button,beep);
+input clk;
+input [6:0]Button;
+output reg[2:0] beep;
+always@(posedge clk) begin
+	if(Button[0])begin
+				beep<=3'b001;
+			end
+	else if(Button[1])begin
+				beep<=3'b010;
+			end
+	else if(Button[2])begin
+				beep<=3'b011;
+			end
+	else if(Button[3])begin
+				beep<=3'b100;
+			end
+	else if(Button[4])begin
+				beep<=3'b101;
+			end
+	else if(Button[5])begin
+				beep<=3'b110;
+			end
+	else if(Button[6])begin
+				beep<=3'b111;
+			end
+	else begin
+			beep<=0;
+		end
+end
+endmodule
+
+//按键判断模块
+module judgeFlag(clk,rst,flag,Button_pulse);
+input clk,rst;
+input [6:0]Button_pulse;
+output reg [6:0]flag;
+
+initial
+	begin
+	flag<=7'b111_1111;
+	end
+
+always @(posedge clk or posedge rst ) begin
+	if (rst) begin
+		// reset
+		flag <= 7'b111_1111;
+	end
+	else if (Button_pulse[6]) begin
+		flag[6]<=0;
+	end
+	else if (Button_pulse[5] & flag[6] == 0) begin
+		flag[5]<=0;
+	end
+	else if (Button_pulse[4] & flag[5] == 0) begin
+		flag[4]<=0;
+	end
+	else if (Button_pulse[3] & flag[4] == 0) begin
+		flag[3]<=0;
+	end
+	else if (Button_pulse[2] & flag[3] == 0) begin
+		flag[2]<=0;
+	end
+	else if (Button_pulse[1] & flag[2] == 0) begin
+		flag[1]<=0;
+	end
+	else if (Button_pulse[0] & flag[1] == 0) begin
+		flag[0]<=0;
+	end
+	else begin
+		flag<=flag;
+	end
+end
+
+endmodule
+
+//数码管显示
+module decode_digit(clk_500,flag,clk1,clk2,clk3,clk4,clk5,clk6,rst,digit_seg, digit_cath);
+	input clk_500;
+	input clk1,clk2,clk3,clk4,clk5,clk6;
+	input rst;
+	input [5:0]flag;
+	output reg[7:0] digit_seg;
+	output reg[7:0] digit_cath;
+	reg [23:0] code;
+	reg [3:0] digit;
+	reg [2:0] cnt;
+	
+always@(posedge clk_500 or posedge rst)//计数器
+	begin
+		if (rst) 
+			cnt<=0;
+		else if(cnt==5)
+			cnt<=0;
+		else cnt<=cnt+1;
+	end
+	
+always@(posedge clk1 or posedge rst )
+	begin
+		if(rst )
+		code[3:0]<=4'b0;
+		else if(flag[0]==1)
+			begin
+				if(code[3:0]==4'h9)
+					begin
+						code[3:0]<=0;
+					end
+				else 
+					code[3:0] <= code[3:0]+1;
+			end
+		else
+			code[3:0]<=code[3:0];
+	end
+		
+always@(posedge clk2 or posedge rst )
+	begin
+		if(rst )
+		code[7:4]<=0;
+		else if(flag[1]==1)
+			begin
+				if(code[7:4]==4'h9)
+					begin
+						code[7:4]<=0;
+					end
+				else 
+					code[7:4] <= code[7:4]+1;
+			end
+		else
+			code[7:4]<=code[7:4];
+	end	
+		
+always@(posedge clk3 or posedge rst )
+	begin
+		if(rst )
+		code[11:8]<=0;
+		else if(flag[2]==1)
+			begin
+				if(code[11:8]==4'h9)
+					begin
+						code[11:8]<=0;
+					end
+				else 
+					code[11:8] <= code[11:8]+1;
+			end
+		else
+			code[11:8]<=code[11:8];
+	end	
+	
+always@(posedge clk4 or posedge rst )
+	begin
+		if(rst )
+		code[15:12]<=0;
+		else if(flag[3]==1)
+			begin
+				if(code[15:12]==4'h9)
+					begin
+						code[15:12]<=0;
+					end
+				else 
+					code[15:12] <= code[15:12]+1;
+			end
+		else
+			code[15:12]<=code[15:12];
+	end	
+	
+always@(posedge clk5 or posedge rst )
+	begin
+		if(rst )
+		code[19:16]<=0;
+		else if(flag[4]==1)
+			begin
+				if(code[19:16]==4'h9)
+					begin
+						code[19:16]<=0;
+					end
+				else 
+					code[19:16] <= code[19:16]+1;
+			end
+		else
+			code[19:16]<=code[19:16];
+	end	
+
+always@(posedge clk6 or posedge rst )
+	begin
+		if(rst )
+		code[23:20]<=4'ha;
+		else if(flag[5]==1)
+			begin
+				if(code[23:20]==4'hf)
+					begin
+						code[23:20]<=4'ha;
+					end
+				else 
+					code[23:20] <= code[23:20]+1;
+			end
+		else
+			code[23:20]<=code[23:20];
+	end	
+always @(clk_500) begin
+	case (digit)
+	4'h0:  digit_seg <= 8'b11111100;//显示0
+    4'h1:  digit_seg <= 8'b01100000;//显示1   
+    4'h2:  digit_seg <= 8'b11011010;//显示2
+    4'h3:  digit_seg <= 8'b11110010;//显示3
+    4'h4:  digit_seg <= 8'b01100110;//显示4
+    4'h5:  digit_seg <= 8'b10110110;//显示5
+    4'h6:  digit_seg <= 8'b10111110;//显示6
+    4'h7:  digit_seg <= 8'b11100000;//显示7
+    4'h8:  digit_seg <= 8'b11111110;//显示8
+    4'h9:  digit_seg <= 8'b11110110;//显示9
+    4'hA:  digit_seg <= 8'b11101110;//显示A
+    4'hB:  digit_seg <= 8'b10011100;//显示C
+    4'hC:  digit_seg <= 8'b10011110;//显示E
+    4'hD:  digit_seg <= 8'b10001110;//显示F
+    4'hE:  digit_seg <= 8'b01101110;//显示H
+    4'hF:  digit_seg <= 8'b00011100;//显示L
+	default:;
+	endcase
+end
+
+always @(posedge clk_500) begin
+	case(cnt)
+	3'h0: begin
+		digit_cath<=8'b1111_1110;
+		digit<=code[3:0];
+	end
+	3'h1: begin
+		digit_cath<=8'b1111_1101;
+		digit<=code[7:4];
+	end
+	3'h2: begin
+		digit_cath<=8'b1111_1011;
+		digit<=code[11:8];
+	end
+	3'h3: begin
+		digit_cath<=8'b1111_0111;
+		digit<=code[15:12];
+	end
+	3'h4: begin
+		digit_cath<=8'b1110_1111;
+		digit<=code[19:16];
+	end
+	3'h5: begin
+		digit_cath<=8'b1101_1111;
+		digit<=code[23:20];
+	end
+	default:;
+	endcase
+end
+
+	endmodule
+
+//点阵显示模块
+module decode_lattice(clk_500,clk_2Hz, rst, row, col,flag);
+	input clk_500;
+	input clk_2Hz;
+	input rst,flag;
+	reg [3:0] code;
+	output reg [7:0] row;
+	output reg [7:0] col;
+	reg [63:0] col_temp;
+	reg [2:0] cnt;
+
+	always@(posedge clk_2Hz or posedge rst )		//计数器1
+		begin
+			if(rst)
+				begin
+					code<=0;
+				end
+			else if(flag==1)
+				begin
+					if(code==4'h4)
+						begin
+							code<=0;
+						end
+					else begin
+						code <= code+1;
+						end
+				end
+			else begin
+				code<=code;
+			end
+		end
+
+	always @(posedge clk_500) begin			//计数器2
+	if (rst) begin
+	cnt<=0;
+	end
+	else begin
+	cnt<=cnt+1;
+	end
+	end
+
+always @(posedge clk_500) begin			//扫描
+	case(cnt)
+		3'h0: begin
+			row<=8'b1111_1110;
+			col<=col_temp[7:0];
+		end
+		3'h1: begin
+			row<=8'b1111_1101;
+			col<=col_temp[15:8];
+		end
+		3'h2: begin
+			row<=8'b1111_1011;
+			col<=col_temp[23:16];
+		end
+		3'h3: begin
+			row<=8'b1111_0111;
+			col<=col_temp[31:24];
+		end
+		3'h4: begin
+			row<=8'b1110_1111;
+			col<=col_temp[39:32];
+		end
+		3'h5: begin
+			row<=8'b1101_1111;
+			col<=col_temp[47:40];
+		end
+		3'h6: begin
+			row<=8'b1011_1111;
+			col<=col_temp[55:48];
+		end
+		3'h7: begin
+			row<=8'b0111_1111;
+			col<=col_temp[63:56];
+		end
+		default:;
+	endcase
+	end
+	
+always @(clk_500) begin			//换字
+	case(code)
+		4'h0: col_temp <= 64'b00010000_11111111_01111110_01000010_01111110_01010100_11010010_00110000;
+		4'h1: col_temp <= 64'b11000100_01011111_10010001_00011111_01010001_01010000_10100000_10100000; 
+		4'h2: col_temp <= 64'b00011000_11111111_00011000_01111110_00000000_01111110_01000010_01111110;
+		4'h3: col_temp <= 64'b00100100_11111111_00010000_11111100_01010110_10100101_01100100_11001100;
+		4'h4: col_temp <= 64'b01001001_01001001_01001001_01001001_01001001_01001001_01001001_10001001;
+	endcase
+end
+endmodule
+
+//按键消抖模块
+module debounce (clk,rst,key,key_pulse);
+parameter N  =  1;                      //要消除的按键的数量
+input clk;
+input rst;
+input [N-1:0]   key;                        //输入的按键					
+output [N-1:0]   key_pulse;                  //按键动作产生的脉冲	
+reg [N-1:0]   key_rst_pre;                //定义一个寄存器型变量存储上一个触发时的按键值
+reg [N-1:0]   key_rst;                    //定义一个寄存器变量储存储当前时刻触发的按键值
+wire [N-1:0]   key_edge;                   //检测到按键由高到低变化是产生一个高脉冲
+
+//利用非阻塞赋值特点，将两个时钟触发时按键状态存储在两个寄存器变量中
+always @(posedge clk  or  posedge rst)
+ begin
+	 if (rst) begin
+		  key_rst <= {N{1'b1}};                //初始化时给key_rst赋值全为1，{}中表示N个1
+		  key_rst_pre <= {N{1'b1}};
+	 end
+	 else begin
+		  key_rst <= key;                     //第一个时钟上升沿触发之后key的值赋给key_rst,同时key_rst的值赋给key_rst_pre
+		  key_rst_pre <= key_rst;             //非阻塞赋值。相当于经过两个时钟触发，key_rst存储的是当前时刻key的值，key_rst_pre存储的是前一个时钟的key的值
+	 end    
+  end
+assign  key_edge = key_rst_pre & (~key_rst);//脉冲边沿检测。当key检测到下降沿时，key_edge产生一个时钟周期的高电平
+reg [17:0]cnt;                       //产生延时所用的计数器，时钟500Hz，要延时20ms左右时间，至少需要4位计数器     
+//此处改动17->3
+//产生20ms延时，当检测到key_edge有效是计数器清零开始计数
+always @(posedge clk or posedge rst)
+  begin
+	 if(rst)
+		 cnt <= 18'h0;				//此处改动18->4
+	 else if(key_edge)
+		 cnt <= 18'h0;
+	 else
+		 cnt <= cnt + 1'h1;
+	 end  
+
+reg     [N-1:0]   key_sec_pre;                //延时后检测电平寄存器变量
+reg     [N-1:0]   key_sec;                    
+
+
+//延时后检测key，如果按键状态变低产生一个时钟的高脉冲。如果按键状态是高的话说明按键无效
+always @(posedge clk  or  posedge rst)
+ begin
+	 if (rst) 
+		  key_sec <= {N{1'b1}};                
+	 else if (cnt==18'h3ffff)			//此处改动18‘h3ffff->4'hf
+		  key_sec <= key;  
+ end
+always @(posedge clk  or  posedge rst)
+ begin
+	 if (rst)
+		  key_sec_pre <= {N{1'b1}};
+	 else                   
+		  key_sec_pre <= key_sec;             
+end      
+assign  key_pulse = key_sec_pre & (~key_sec);     
+
+endmodule
+
+
+//分频器模块
+module divider1(clkin, clkout);
+parameter N = 1;
+input clkin;
+output reg clkout;
+reg [21:0] cnt;
+initial 
+begin
+clkout=0;
+cnt=0;
+end
+always @(posedge clkin) begin
+	if (cnt==N) begin
+		clkout <= !clkout;
+		cnt <= 0;
+	end
+	else begin
+		cnt <= cnt + 1;
+	end
+end
+endmodule
+
+
+module divider2(clkin, clkout);
+parameter N = 1;
+input clkin;
+output reg clkout;
+reg [2:0] cnt;
+initial 
+begin
+clkout=0;
+cnt=0;
+end
+always @(posedge clkin) begin
+	if (cnt==N) begin
+		clkout <= !clkout;
+		cnt <= 0;
+	end
+	else begin
+		cnt <= cnt + 1;
+	end
+end
+endmodule 
+
+
+//分频器模块
+module divider3(clkin, clkout);
+parameter N = 1;
+input clkin;
+output reg clkout;
+reg [15:0] cnt;
+initial 
+begin
+clkout=0;
+cnt=0;
+end
+always @(posedge clkin) begin
+	if (cnt==N) begin
+		clkout <= !clkout;
+		cnt <= 0;
+	end
+	else begin
+		cnt <= cnt + 1;
+	end
+end
+endmodule
+
+module divider4(clkin, clkout);
+parameter N = 1;
+input clkin;
+output reg clkout;
+reg [4:0] cnt;
+initial 
+begin
+clkout=0;
+cnt=0;
+end
+always @(posedge clkin) begin
+	if (cnt==N) begin
+		clkout <= !clkout;
+		cnt <= 0;
+	end
+	else begin
+		cnt <= cnt + 1;
+	end
+end
+endmodule
